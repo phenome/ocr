@@ -1,0 +1,10 @@
+pre-commit:
+  commands:
+    biome:
+      run: bun fix {staged_files}
+      stage_fixed: true
+
+pre-push:
+  commands:
+    typecheck:
+      run: bun run typecheck

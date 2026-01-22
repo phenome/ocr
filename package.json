@@ -1,0 +1,23 @@
+{
+	"name": "ocr",
+	"module": "src/index.ts",
+	"type": "module",
+	"private": true,
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.4",
+		"@types/bun": "latest",
+		"@typescript/native-preview": "^7.0.0-dev.20260122.3",
+		"lefthook": "^1.7.10",
+		"typescript": "^5.0.0"
+	},
+	"peerDependencies": {
+		"typescript": "^5"
+	},
+	"scripts": {
+		"lint": "biome check .",
+		"format": "biome format .",
+		"fix": "biome check --write --unsafe .",
+		"typecheck": "tsgo --noEmit",
+		"prepare": "lefthook install"
+	}
+}
