@@ -26,6 +26,7 @@
 	},
 	"scripts": {
 		"start": "bun run src/index.ts",
+		"docker:build": "docker build -t phenome/ocr .",
 		"lint": "biome check .",
 		"format": "biome format .",
 		"fix": "biome check --write --unsafe .",

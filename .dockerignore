@@ -1,0 +1,7 @@
+node_modules
+.openspec
+openspec
+.git
+.github
+*.log
+.DS_Store
