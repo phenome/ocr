@@ -16,7 +16,7 @@ const requiredEnvVars = [
 	'AWS_SECRET_ACCESS_KEY',
 	'AWS_REGION',
 ]
-const supportedExtensions = new Set([
+export const supportedInputExtensions = new Set([
 	'.pdf',
 	'.png',
 	'.jpg',
@@ -189,9 +189,9 @@ export const processDocument = async (
 ): Promise<LayoutResponse> => {
 	const region = validateEnv()
 	const extension = path.extname(filePath).toLowerCase()
-	if (!supportedExtensions.has(extension)) {
+	if (!supportedInputExtensions.has(extension)) {
 		throw new Error(
-			`Unsupported document format: ${extension}. Supported formats: ${[...supportedExtensions].join(', ')}`
+			`Unsupported document format: ${extension}. Supported formats: ${[...supportedInputExtensions].join(', ')}`
 		)
 	}
 

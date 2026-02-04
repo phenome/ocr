@@ -1,38 +1,53 @@
 #!/usr/bin/env bun
-import { mkdir } from 'node:fs/promises'
-import path from 'node:path'
-import { parseArgs } from './cli/parseArgs'
-import { exportToExcel } from './utils/exportExcel'
-import { exportToWord } from './utils/exportWord'
-import { processDocument } from './utils/textract'
+import { buildProgram, parseArgs } from './cli/parseArgs'
+import { convertFile, watchFolders } from './lib'
 
 const run = async () => {
 	try {
-		const { inputPath, format, outputDir } = parseArgs(process.argv)
-		const layout = await processDocument(inputPath)
-		const parsedPath = path.parse(inputPath)
-		const outputExtension = format === 'word' ? '.docx' : '.xlsx'
-		const targetDir = outputDir ?? parsedPath.dir
-
-		if (outputDir) {
-			await mkdir(outputDir, { recursive: true })
+		const args = parseArgs(process.argv)
+		if (!args) {
+			return
 		}
+		if (args.command === 'watch') {
+			const watcher = await watchFolders({
+				wordDir: args.wordDir,
+				excelDir: args.excelDir,
+				onEvent: (event) => {
+					if (event.type === 'start') {
+						console.log(`Processing ${event.inputPath}`)
+						return
+					}
+					if (event.type === 'success') {
+						console.log(`Processed ${event.inputPath} -> ${event.outputPath}`)
+						return
+					}
+					console.error(
+						`Failed ${event.inputPath}: ${event.error?.message ?? 'Unknown error'}`
+					)
+				},
+			})
 
-		const outputPath = path.join(
-			targetDir,
-			`${parsedPath.name}${outputExtension}`
-		)
+			const shutdown = () => {
+				watcher.close()
+			}
 
-		if (format === 'word') {
-			await exportToWord(layout, outputPath)
-			console.log(`Word document saved to ${outputPath}`)
+			process.once('SIGINT', shutdown)
+			process.once('SIGTERM', shutdown)
 			return
 		}
 
-		await exportToExcel(layout, outputPath)
-		console.log(`Excel workbook saved to ${outputPath}`)
+		const result = await convertFile({
+			inputPath: args.inputPath,
+			format: args.format,
+			outputDir: args.outputDir,
+		})
+		const label = result.format === 'word' ? 'Word document' : 'Excel workbook'
+		console.log(`${label} saved to ${result.outputPath}`)
 	} catch (error) {
 		if (error instanceof Error) {
+			if (error.name === 'CommanderError') {
+				return
+			}
 			const metadata = (
 				error as { $metadata?: { requestId?: string; httpStatusCode?: number } }
 			).$metadata
