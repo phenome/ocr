@@ -1,13 +1,13 @@
 # Project Context
 
 ## Purpose
-Greenfield service that ingests documents (Word or Excel), uses Google Document AI layout parsing, and outputs transformed documents in Word or Excel formats.
+Greenfield service that ingests documents (Word or Excel), uses Amazon Textract layout parsing, and outputs transformed documents in Word or Excel formats.
 
 ## Tech Stack
 - Bun runtime
 - TypeScript
-- Google Cloud Document AI (Layout Parser / layout parse chunk)
-- Google Cloud SDKs for Document AI
+- Amazon Textract
+- AWS SDK for JavaScript v3
 
 ## Project Conventions
 
@@ -38,8 +38,8 @@ Greenfield service that ingests documents (Word or Excel), uses Google Document 
 - Core capability: preserve layout semantics while converting between formats
 
 ## Important Constraints
-- Must use Google Document AI Layout Parser
+- Must use Amazon Textract
 - Leverage Bun + TypeScript throughout the stack
 
 ## External Dependencies
-- Google Cloud Document AI (Layout Parser)
+- Amazon Textract
