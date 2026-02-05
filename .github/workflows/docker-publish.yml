@@ -8,6 +8,12 @@ on:
 jobs:
   docker:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      packages: write
+      artifact-metadata: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,9 +37,19 @@ jobs:
             type=sha
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
+          provenance: mode=max
+          sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Attest build provenance (GitHub)
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: index.docker.io/phenome/ocr
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
