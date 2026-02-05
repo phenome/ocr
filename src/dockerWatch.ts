@@ -4,6 +4,25 @@ import { watchFolders } from './lib'
 const watchDocx = (process.env.WATCH_DOCX ?? '').trim()
 const watchXlsx = (process.env.WATCH_XLSX ?? '').trim()
 
+const requiredAwsEnvVars = [
+	'AWS_ACCESS_KEY_ID',
+	'AWS_SECRET_ACCESS_KEY',
+	'AWS_REGION',
+	'AWS_TEXTRACT_S3_BUCKET',
+]
+
+const missingAws = requiredAwsEnvVars.filter((key) => {
+	const value = process.env[key]
+	return !value || value.trim().length === 0
+})
+
+if (missingAws.length > 0) {
+	console.error(
+		`Missing required AWS environment variables: ${missingAws.join(', ')}`
+	)
+	process.exit(1)
+}
+
 if (!watchDocx && !watchXlsx) {
 	console.error('WATCH_DOCX or WATCH_XLSX must be set.')
 	process.exit(1)
