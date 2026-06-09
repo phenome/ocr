@@ -9,7 +9,7 @@ import {
 	StartDocumentAnalysisCommand,
 	TextractClient,
 } from '@aws-sdk/client-textract'
-import type { LayoutResponse, LayoutTable } from '../types'
+import type { LayoutResponse, LayoutTable, TextractMetadata } from '../types'
 
 const requiredEnvVars = [
 	'AWS_ACCESS_KEY_ID',
@@ -146,7 +146,13 @@ const uploadToS3 = async (bucket: string, key: string, bytes: Uint8Array) => {
 const fetchAnalysisBlocks = async (
 	client: TextractClient,
 	jobId: string
-): Promise<Block[]> => {
+): Promise<{
+	blocks: Block[]
+	pollCount: number
+	resultPageCount: number
+	requestId?: string
+}> => {
+	let pollCount = 0
 	while (true) {
 		const response = await client.send(
 			new GetDocumentAnalysisCommand({
@@ -154,6 +160,7 @@ const fetchAnalysisBlocks = async (
 				MaxResults: 1000,
 			})
 		)
+		pollCount += 1
 
 		const status = response.JobStatus
 		if (status === 'FAILED') {
@@ -167,6 +174,8 @@ const fetchAnalysisBlocks = async (
 
 		const blocks: Block[] = [...(response.Blocks ?? [])]
 		let nextToken = response.NextToken
+		let resultPageCount = 1
+		let requestId = response.$metadata.requestId
 
 		while (nextToken) {
 			const page = await client.send(
@@ -176,11 +185,14 @@ const fetchAnalysisBlocks = async (
 					MaxResults: 1000,
 				})
 			)
+			pollCount += 1
+			resultPageCount += 1
+			requestId = page.$metadata.requestId ?? requestId
 			blocks.push(...(page.Blocks ?? []))
 			nextToken = page.NextToken
 		}
 
-		return blocks
+		return { blocks, pollCount, resultPageCount, requestId }
 	}
 }
 
@@ -199,6 +211,7 @@ export const processDocument = async (
 	const bytes = await readFile(filePath)
 	const client = new TextractClient({ region })
 	let blocks: Block[] = []
+	let textract: TextractMetadata
 
 	const requiresS3 = extension === '.pdf' || fileStats.size > maxInlineBytes
 	if (requiresS3) {
@@ -225,7 +238,19 @@ export const processDocument = async (
 			throw new Error('Textract did not return a job id')
 		}
 
-		blocks = await fetchAnalysisBlocks(client, jobId)
+		const analysis = await fetchAnalysisBlocks(client, jobId)
+		blocks = analysis.blocks
+		textract = {
+			mode: 'async',
+			pageCount: blocks.filter((block) => block.BlockType === 'PAGE').length,
+			sourceBytes: fileStats.size,
+			pollCount: analysis.pollCount,
+			resultPageCount: analysis.resultPageCount,
+			requestId: analysis.requestId ?? startResponse.$metadata.requestId,
+			s3Bucket: bucket,
+			s3Key: key,
+			jobId,
+		}
 	} else {
 		const command = new AnalyzeDocumentCommand({
 			Document: { Bytes: bytes },
@@ -234,6 +259,14 @@ export const processDocument = async (
 
 		const response = await client.send(command)
 		blocks = response.Blocks ?? []
+		textract = {
+			mode: 'sync',
+			pageCount: blocks.filter((block) => block.BlockType === 'PAGE').length,
+			sourceBytes: fileStats.size,
+			pollCount: 0,
+			resultPageCount: 1,
+			requestId: response.$metadata.requestId,
+		}
 	}
 	const blocksById = new Map<string, Block>()
 
@@ -249,5 +282,5 @@ export const processDocument = async (
 
 	const tables = buildTables(blocks, blocksById)
 
-	return { paragraphs, tables }
+	return { paragraphs, tables, pageCount: textract.pageCount, textract }
 }

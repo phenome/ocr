@@ -4,9 +4,23 @@ export type LayoutTable = {
 	rows: string[][]
 }
 
+export type TextractMetadata = {
+	mode: 'sync' | 'async'
+	pageCount: number
+	sourceBytes: number
+	pollCount: number
+	resultPageCount: number
+	requestId?: string
+	s3Bucket?: string
+	s3Key?: string
+	jobId?: string
+}
+
 export type LayoutResponse = {
 	paragraphs: string[]
 	tables: LayoutTable[]
+	pageCount: number
+	textract: TextractMetadata
 }
 
 export type ConvertCliArgs = {
@@ -30,15 +44,34 @@ export type ConvertOptions = {
 	outputDir?: string
 }
 
-export type ConvertResult = {
+export type ConvertOutput = {
 	outputPath: string
 	format: OutputFormat
 }
 
-export type WatchEvent = {
-	type: 'start' | 'success' | 'error'
+export type ConvertResult = ConvertOutput & {
+	pageCount: number
+	sourceBytes: number
+	textract: TextractMetadata
+}
+
+export type ConvertBatchResult = {
 	inputPath: string
+	outputs: ConvertOutput[]
+	pageCount: number
+	sourceBytes: number
+	textract: TextractMetadata
+}
+
+export type WatchEvent = {
+	type: 'start' | 'success' | 'skip' | 'error'
+	inputPath: string
+	formats?: OutputFormat[]
 	outputPath?: string
+	outputs?: ConvertOutput[]
+	pageCount?: number
+	sourceBytes?: number
+	textract?: TextractMetadata
 	error?: Error
 }
 

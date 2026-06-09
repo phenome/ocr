@@ -1,4 +1,5 @@
 import { watch } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import type {
 	OutputFormat,
@@ -7,7 +8,8 @@ import type {
 	WatchOptions,
 } from '../types'
 import { supportedInputExtensions } from '../utils/textract'
-import { convertFile } from './convert'
+import { convertFileToFormats } from './convert'
+import { getDefaultOutputPath } from './outputPath'
 
 type FolderQueue = {
 	enqueue: (filePath: string) => void
@@ -38,8 +40,77 @@ const isSupportedInput = (filePath: string): boolean => {
 	return supportedInputExtensions.has(extension)
 }
 
+const sleep = (ms: number): Promise<void> =>
+	new Promise((resolve) => setTimeout(resolve, ms))
+
+const isOutputFresh = async (
+	inputPath: string,
+	format: OutputFormat
+): Promise<boolean> => {
+	const outputPath = getDefaultOutputPath({ inputPath, format })
+	try {
+		const [inputStats, outputStats] = await Promise.all([
+			stat(inputPath),
+			stat(outputPath),
+		])
+		return outputStats.mtimeMs >= inputStats.mtimeMs
+	} catch {
+		return false
+	}
+}
+
+const getStaleFormats = async (
+	inputPath: string,
+	formats: OutputFormat[]
+): Promise<OutputFormat[]> => {
+	const stale: OutputFormat[] = []
+	for (const format of formats) {
+		if (!(await isOutputFresh(inputPath, format))) {
+			stale.push(format)
+		}
+	}
+	return stale
+}
+
+const waitForStableFile = async (
+	filePath: string,
+	stableIntervalMs = 1000,
+	maxWaitMs = 60000
+): Promise<void> => {
+	let lastSize = -1
+	let lastMtimeMs = -1
+	let stableChecks = 0
+	const deadline = Date.now() + maxWaitMs
+
+	while (Date.now() <= deadline) {
+		try {
+			const fileStats = await stat(filePath)
+			if (
+				fileStats.size > 0 &&
+				fileStats.size === lastSize &&
+				fileStats.mtimeMs === lastMtimeMs
+			) {
+				stableChecks += 1
+				if (stableChecks >= 2) {
+					return
+				}
+			} else {
+				stableChecks = 0
+				lastSize = fileStats.size
+				lastMtimeMs = fileStats.mtimeMs
+			}
+		} catch {
+			stableChecks = 0
+		}
+
+		await sleep(stableIntervalMs)
+	}
+
+	throw new Error(`File was not stable after ${maxWaitMs}ms: ${filePath}`)
+}
+
 const createQueue = (
-	format: OutputFormat,
+	formats: OutputFormat[],
 	onEvent: (event: WatchEvent) => void
 ): FolderQueue => {
 	const queue: string[] = []
@@ -58,17 +129,31 @@ const createQueue = (
 		}
 
 		running = true
-		onEvent({ type: 'start', inputPath: next })
 		try {
-			const { outputPath } = await convertFile({
+			await waitForStableFile(next)
+			const staleFormats = await getStaleFormats(next, formats)
+			if (staleFormats.length === 0) {
+				onEvent({ type: 'skip', inputPath: next, formats })
+				return
+			}
+
+			onEvent({ type: 'start', inputPath: next, formats: staleFormats })
+			const result = await convertFileToFormats(next, staleFormats)
+			onEvent({
+				type: 'success',
 				inputPath: next,
-				format,
+				formats: staleFormats,
+				outputPath: result.outputs[0]?.outputPath,
+				outputs: result.outputs,
+				pageCount: result.pageCount,
+				sourceBytes: result.sourceBytes,
+				textract: result.textract,
 			})
-			onEvent({ type: 'success', inputPath: next, outputPath })
 		} catch (error) {
 			onEvent({
 				type: 'error',
 				inputPath: next,
+				formats,
 				error: error instanceof Error ? error : new Error('Unknown error'),
 			})
 		} finally {
@@ -105,8 +190,9 @@ export const watchFolders = async (
 	const debounceMs = options.debounceMs ?? 500
 	const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-	const wordQueue = createQueue('word', options.onEvent)
-	const excelQueue = createQueue('excel', options.onEvent)
+	const watchers = [] as Array<{
+		close: () => void
+	}>
 
 	const schedule = (
 		folderPath: string,
@@ -137,42 +223,36 @@ export const watchFolders = async (
 		)
 	}
 
-	const watchers = [] as Array<{
-		close: () => void
-	}>
-
-	if (options.wordDir) {
-		const wordDir = options.wordDir
-		const wordWatcher = watch(wordDir, (eventType, filename) => {
+	const addWatcher = (folderPath: string, formats: OutputFormat[]) => {
+		const queue = createQueue(formats, options.onEvent)
+		const folderWatcher = watch(folderPath, (eventType, filename) => {
 			if (eventType === 'rename' || eventType === 'change') {
-				schedule(wordDir, wordQueue, filename)
+				schedule(folderPath, queue, filename)
 			}
 		})
-		wordWatcher.on('error', (error) => {
+		folderWatcher.on('error', (error) => {
 			options.onEvent({
 				type: 'error',
-				inputPath: wordDir,
+				inputPath: folderPath,
+				formats,
 				error: error instanceof Error ? error : new Error('Watcher error'),
 			})
 		})
-		watchers.push(wordWatcher)
+		watchers.push(folderWatcher, queue)
 	}
 
-	if (options.excelDir) {
-		const excelDir = options.excelDir
-		const excelWatcher = watch(excelDir, (eventType, filename) => {
-			if (eventType === 'rename' || eventType === 'change') {
-				schedule(excelDir, excelQueue, filename)
-			}
-		})
-		excelWatcher.on('error', (error) => {
-			options.onEvent({
-				type: 'error',
-				inputPath: excelDir,
-				error: error instanceof Error ? error : new Error('Watcher error'),
-			})
-		})
-		watchers.push(excelWatcher)
+	const wordDir = options.wordDir ? path.resolve(options.wordDir) : undefined
+	const excelDir = options.excelDir ? path.resolve(options.excelDir) : undefined
+
+	if (options.wordDir && options.excelDir && wordDir === excelDir) {
+		addWatcher(options.wordDir, ['word', 'excel'])
+	} else {
+		if (options.wordDir) {
+			addWatcher(options.wordDir, ['word'])
+		}
+		if (options.excelDir) {
+			addWatcher(options.excelDir, ['excel'])
+		}
 	}
 
 	return {
@@ -180,8 +260,6 @@ export const watchFolders = async (
 			for (const watcher of watchers) {
 				watcher.close()
 			}
-			wordQueue.close()
-			excelQueue.close()
 			for (const timer of debounceTimers.values()) {
 				clearTimeout(timer)
 			}
